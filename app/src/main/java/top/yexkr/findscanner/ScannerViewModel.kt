@@ -48,6 +48,8 @@ class ScannerViewModel @JvmOverloads constructor(
     private var generation = 0
     private var inferenceElapsed = 0L
     private val writes = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private val notices = Channel<String>(Channel.BUFFERED)
+    val notifications = notices.receiveAsFlow()
 
     init {
         viewModelScope.launch {
@@ -65,11 +67,15 @@ class ScannerViewModel @JvmOverloads constructor(
         }
     }
     fun clearError() { _state.update { it.copy(error = null) } }
-    private fun fail(error: Exception) { if (error !is CancellationException) _state.update { it.copy(error = error.userMessage()) } }
+    private fun notifyUser(message: String) { notices.trySend(message) }
+    private fun showError(message: String) { _state.update { it.copy(error = message) }; notifyUser(message) }
+    private fun fail(error: Exception, context: String? = null) {
+        if (error !is CancellationException) showError(listOfNotNull(context, error.userMessage()).joinToString("："))
+    }
     fun permissions(granted: Set<String>) { _state.update { it.copy(granted = granted, deviceStatus = collector.deviceStatus()) } }
-    fun editServer(value: String) { _state.update { it.copy(draft = it.draft.copy(server = value)) } }
-    fun editRegion(value: String) { _state.update { it.copy(draft = it.draft.copy(region = value)) } }
-    fun editDevice(value: String) { _state.update { it.copy(draft = it.draft.copy(deviceId = value)) } }
+    fun editServer(value: String) { _state.update { it.copy(draft = it.draft.copy(server = value), error = null) } }
+    fun editRegion(value: String) { _state.update { it.copy(draft = it.draft.copy(region = value), error = null) } }
+    fun editDevice(value: String) { _state.update { it.copy(draft = it.draft.copy(deviceId = value), error = null) } }
     fun location(value: String) { _state.update { it.copy(location = value) } }
     fun tab(inference: Boolean) { _state.update { it.copy(inferenceTab = inference) } }
     fun navigate(page: Page) {
@@ -86,7 +92,7 @@ class ScannerViewModel @JvmOverloads constructor(
         if (state.value.connecting || !state.value.ready || !foreground) return
         pause(); uploadJob?.cancel()
         connectJob = viewModelScope.launch {
-            _state.update { it.copy(connecting = true) }
+            _state.update { it.copy(connecting = true, error = null) }
             try {
                 val config = state.value.draft.validated()
                 val result = repository.connect(config)
@@ -94,14 +100,15 @@ class ScannerViewModel @JvmOverloads constructor(
                 _state.update { it.copy(config = config, draft = config, inferenceReady = result.inferenceReady,
                     page = Page.Home, inference = null, expired = false, inferenceMessage = "等待首轮采样") }
                 startUploader()
+                notifyUser(if (config.isDebug) "已进入本地调试模式，采集数据不会上传" else "服务器连接成功")
             } catch (cancel: CancellationException) { throw cancel }
-            catch (e: Exception) { fail(e) }
+            catch (e: Exception) { fail(e, "连接失败") }
             finally { _state.update { it.copy(connecting = false) } }
         }
     }
     fun prepareCollection() {
         if (state.value.config == null) { navigate(Page.Connection); return }
-        if (state.value.location.isBlank()) { _state.update { it.copy(error = "请填写采集位置") }; return }
+        if (state.value.location.isBlank()) { showError("请填写采集位置"); return }
         pause()
         _state.update { it.copy(page = Page.Collection, sessionId = UUID.randomUUID().toString(), sessionLabel = it.location.trim()) }
     }
@@ -114,7 +121,7 @@ class ScannerViewModel @JvmOverloads constructor(
     fun toggleInference() { if (state.value.inferring) pause() else start(true) }
     fun startInference() {
         if (state.value.config == null) { navigate(Page.Connection); return }
-        if (state.value.config?.isDebug == true) { _state.update { it.copy(error = "debug 模式下位置推理不可用") }; return }
+        if (state.value.config?.isDebug == true) { showError("debug 模式下位置推理不可用"); return }
         _state.update { it.copy(page = Page.Inference, sessionId = UUID.randomUUID().toString(), inference = null, expired = false,
             inferenceFromHistory = false) }
         start(true)
@@ -122,7 +129,7 @@ class ScannerViewModel @JvmOverloads constructor(
     private fun start(inference: Boolean) {
         val config = state.value.config ?: return
         if (!foreground || samplingJob?.isActive == true) return
-        if (inference && config.isDebug) { _state.update { it.copy(error = "debug 模式下位置推理不可用") }; return }
+        if (inference && config.isDebug) { showError("debug 模式下位置推理不可用"); return }
         if (!inference && state.value.sessionLabel.isBlank()) return
         val sessionId = state.value.sessionId.ifBlank { UUID.randomUUID().toString() }
         val label = state.value.sessionLabel
@@ -156,6 +163,7 @@ class ScannerViewModel @JvmOverloads constructor(
     private fun submitInference(config: ConnectionConfig, frame: SignalFrame, token: Int) {
         if (inferenceJob?.isActive == true) return // No queue or replay for inference.
         inferenceJob = viewModelScope.launch {
+            var failure: String? = null
             val history = try {
                 if (frame.signalCount == 0 && frame.gps == null) InferenceHistory(frame, null, "没有可用信号")
                 else {
@@ -164,8 +172,9 @@ class ScannerViewModel @JvmOverloads constructor(
                     InferenceHistory(frame, result, when (result.status) { "ok" -> "推理完成"; "no_model" -> "本区域暂无模型"; else -> "没有匹配位置" })
                 }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (e: Exception) { InferenceHistory(frame, null, e.userMessage()) }
+            catch (e: Exception) { val message = e.userMessage(); failure = message; InferenceHistory(frame, null, message) }
             if (token != generation || !foreground || !state.value.inferring) return@launch
+            failure?.let { if (it != state.value.inference?.message) notifyUser("推理失败：$it") }
             inferenceElapsed = SystemClock.elapsedRealtime()
             _state.update { it.copy(inference = history, inferenceMessage = history.message, expired = false) }
             // A completed, accepted result must survive a subsequent pause/navigation cancellation.
@@ -205,13 +214,18 @@ class ScannerViewModel @JvmOverloads constructor(
         }
     }
     fun retryUpload(id: String) {
-        if (state.value.config?.isDebug == true) { _state.update { it.copy(error = "debug 模式不上传任何数据") }; return }
-        viewModelScope.launch { try { repository.retry(id) } catch (e: Exception) { fail(e) } }
+        if (state.value.config?.isDebug == true) { showError("debug 模式不上传任何数据"); return }
+        viewModelScope.launch {
+            try {
+                repository.retry(id)
+                notifyUser(if (samples.value.any { it.id == id && it.status == UploadStatus.PENDING }) "已加入上传重试队列" else "当前记录无需重试")
+            } catch (e: Exception) { fail(e, "重试失败") }
+        }
     }
     fun clearHistory() {
         pause()
         _state.update { it.copy(inference = null, selectedId = null, expired = false, inferenceMessage = "等待首轮采样") }
-        writes.trySend { repository.clear() }
+        writes.trySend { repository.clear(); notifyUser("本地历史已清理") }
     }
-    override fun onCleared() { collector.stop(); writes.close() }
+    override fun onCleared() { collector.stop(); writes.close(); notices.close() }
 }

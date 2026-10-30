@@ -1,6 +1,7 @@
 package top.yexkr.findscanner.data
 
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
 import okhttp3.MediaType.Companion.toMediaType
 import retrofit2.HttpException
@@ -9,6 +10,10 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
 import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import java.util.concurrent.TimeUnit
 
 interface ScannerApi {
@@ -57,7 +62,36 @@ fun Throwable.retryable(): Boolean = when (this) {
     else -> false
 }
 fun Throwable.userMessage(): String = when (this) {
-    is HttpException -> "服务器返回 HTTP ${code()}"
-    is IOException -> "网络不可用或请求超时：${message ?: "连接失败"}"
+    is HttpException -> "服务器返回 HTTP ${code()}${serverErrorDetail()?.let { "：$it" }.orEmpty()}"
+    is UnknownHostException -> "无法解析服务器地址，请检查 IP 或域名"
+    is SocketTimeoutException -> "连接或请求超时，请检查服务器与网络"
+    is ConnectException -> "无法连接服务器，请检查地址、端口及服务是否启动"
+    is SSLException -> "HTTPS 连接失败，请检查服务器证书及 TLS 配置"
+    is IOException -> "网络不可用或请求中断：${message?.noticeText() ?: "连接失败"}"
+    is SerializationException -> "服务器响应格式不正确，请检查 API 协议"
     else -> message ?: "操作失败"
 }
+
+private fun String.noticeText() = replace(Regex("[\\p{Cc}\\s]+"), " ").trim().take(200)
+
+private fun HttpException.serverErrorDetail(): String? = runCatching {
+    // Read a bounded preview without consuming the response, so diagnostics can be reused.
+    val raw = response()?.errorBody()?.source()?.peek()?.use { source ->
+        source.request(4096)
+        source.readUtf8(minOf(source.buffer.size, 4096L))
+    }?.trim().orEmpty()
+    if (raw.isBlank() || raw.startsWith("<")) return@runCatching null
+    val parsed = runCatching { wireJson.parseToJsonElement(raw) }.getOrNull()
+    fun JsonElement?.text() = (this as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.noticeText()?.takeIf { it.isNotBlank() }
+    val root = parsed as? JsonObject
+    val error = root?.get("error") as? JsonObject
+    val message = error?.get("message").text() ?: root?.get("message").text()
+        ?: root?.get("detail").text() ?: root?.get("error").text() ?: parsed.text()
+    val code = error?.get("code").text() ?: root?.get("code").text()
+    when {
+        message != null -> listOfNotNull(code, message).joinToString(" · ").noticeText()
+        code != null -> code
+        parsed != JsonNull && !raw.startsWith("{") && !raw.startsWith("[") -> raw.noticeText()
+        else -> null
+    }
+}.getOrNull()

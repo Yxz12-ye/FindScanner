@@ -1,8 +1,11 @@
 package top.yexkr.findscanner.ui
 
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -84,7 +87,9 @@ internal fun BottomActionBar(content: @Composable () -> Unit) {
 
 @Composable
 internal fun MainButton(text: String, @DrawableRes icon: Int, enabled: Boolean = true, onClick: () -> Unit) {
-    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+    val interactions = remember { MutableInteractionSource() }
+    Button(onClick = onClick, enabled = enabled, interactionSource = interactions,
+        modifier = Modifier.fillMaxWidth().height(48.dp).pressFeedback(interactions)) {
         Icon(painterResource(icon), null, Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
         Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -93,8 +98,15 @@ internal fun MainButton(text: String, @DrawableRes icon: Int, enabled: Boolean =
 
 @Composable
 internal fun TabButton(text: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    if (selected) Button(onClick = onClick, modifier = modifier.height(48.dp)) { Text(text, fontWeight = FontWeight.Bold) }
-    else FilledTonalButton(onClick = onClick, modifier = modifier.height(48.dp)) { Text(text) }
+    val interactions = remember { MutableInteractionSource() }
+    val container by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+        animationSpec = tween(180), label = "tabContainer")
+    val foreground by animateColorAsState(if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
+        animationSpec = tween(180), label = "tabForeground")
+    Button(onClick = onClick, interactionSource = interactions, modifier = modifier.height(48.dp).pressFeedback(interactions),
+        colors = ButtonDefaults.buttonColors(containerColor = container, contentColor = foreground)) {
+        Text(text, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
 }
 
 @Composable
@@ -133,7 +145,9 @@ internal fun StatsRow(stats: List<Pair<String, String>>) {
 
 @Composable
 internal fun HistoryRow(title: String, subtitle: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
+    val interactions = remember { MutableInteractionSource() }
+    Surface(onClick = onClick, interactionSource = interactions, modifier = Modifier.pressFeedback(interactions),
+        shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(painterResource(R.drawable.ic_history), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
