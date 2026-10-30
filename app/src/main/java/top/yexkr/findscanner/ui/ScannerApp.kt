@@ -2,9 +2,11 @@ package top.yexkr.findscanner.ui
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -17,6 +19,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.yexkr.findscanner.R
@@ -50,7 +54,8 @@ internal fun Heading(title: String, subtitle: String) {
 @Composable
 internal fun SectionTitle(title: String, badge: String? = null) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f),
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (badge != null) BadgeLabel(badge)
     }
 }
@@ -58,7 +63,8 @@ internal fun SectionTitle(title: String, badge: String? = null) {
 @Composable
 internal fun BadgeLabel(text: String, modifier: Modifier = Modifier) {
     Text(text, modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer).padding(horizontal = 10.dp, vertical = 4.dp),
-        color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelMedium)
+        color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelMedium,
+        maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 @Composable
@@ -81,7 +87,7 @@ internal fun MainButton(text: String, @DrawableRes icon: Int, enabled: Boolean =
     Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().height(48.dp)) {
         Icon(painterResource(icon), null, Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
-        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -94,23 +100,28 @@ internal fun TabButton(text: String, selected: Boolean, modifier: Modifier, onCl
 @Composable
 internal fun KeyValue(key: String, value: String, mono: Boolean = false) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(key, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(key, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
-            fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, modifier = Modifier.widthIn(max = 210.dp))
+            fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
+            modifier = Modifier.weight(1.5f).horizontalScroll(rememberScrollState()),
+            textAlign = TextAlign.End, maxLines = 1, softWrap = false)
     }
 }
 
 @Composable
 internal fun InlineStat(value: String, label: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), maxLines = 1, softWrap = false)
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 internal fun StatsRow(stats: List<Pair<String, String>>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         stats.forEach { (value, label) ->
             Surface(Modifier.weight(1f), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
@@ -127,8 +138,9 @@ internal fun HistoryRow(title: String, subtitle: String, onClick: () -> Unit) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(painterResource(R.drawable.ic_history), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, style = MaterialTheme.typography.bodyMedium)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(painterResource(R.drawable.ic_chevron_right), null)
         }

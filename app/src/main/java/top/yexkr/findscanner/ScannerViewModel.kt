@@ -22,6 +22,7 @@ data class ScannerState(
     val running: Boolean = false, val inferring: Boolean = false,
     val progress: Float = 0f, val connecting: Boolean = false, val ready: Boolean = false,
     val inferenceReady: Boolean = false, val selectedId: String? = null, val detailFromHistory: Boolean = false,
+    val historyReturnPage: Page = Page.Connection, val inferenceFromHistory: Boolean = false,
     val inference: InferenceHistory? = null, val inferenceMessage: String = "等待首轮采样", val expired: Boolean = false,
     val error: String? = null, val deviceStatus: String = "", val granted: Set<String> = emptySet()
 )
@@ -75,17 +76,11 @@ class ScannerViewModel @JvmOverloads constructor(
         if (page != Page.Connection) connectJob?.cancel()
         if (page !in listOf(Page.Collection, Page.Detail)) pause()
         if (page in listOf(Page.Connection, Page.Permissions)) uploadJob?.cancel()
-        _state.update { it.copy(page = if (page == Page.Home && it.config == null) Page.Connection else page) }
-        if (page == Page.Home) startUploader()
+        _state.update { it.navigateTo(page) }
+        if (state.value.page == Page.Home) startUploader()
     }
     fun back() {
-        navigate(when (state.value.page) {
-            Page.Permissions -> Page.Permissions
-            Page.Connection -> Page.Permissions
-            Page.Home -> Page.Connection
-            Page.Detail -> if (state.value.detailFromHistory) Page.SampleHistory else Page.Collection
-            else -> Page.Home
-        })
+        navigate(state.value.backPage())
     }
     fun connect() {
         if (state.value.connecting || !state.value.ready || !foreground) return
@@ -112,14 +107,16 @@ class ScannerViewModel @JvmOverloads constructor(
     }
     fun detail(id: String, history: Boolean = false) { _state.update { it.copy(page = Page.Detail, selectedId = id, detailFromHistory = history) } }
     fun showInference(history: InferenceHistory) {
-        pause(); _state.update { it.copy(page = Page.Inference, inference = history, inferenceMessage = history.message, expired = true) }
+        pause(); _state.update { it.copy(page = Page.Inference, inference = history, inferenceMessage = history.message, expired = true,
+            inferenceFromHistory = true) }
     }
     fun toggleCollection() { if (state.value.running) pause() else start(false) }
     fun toggleInference() { if (state.value.inferring) pause() else start(true) }
     fun startInference() {
         if (state.value.config == null) { navigate(Page.Connection); return }
         if (state.value.config?.isDebug == true) { _state.update { it.copy(error = "debug 模式下位置推理不可用") }; return }
-        _state.update { it.copy(page = Page.Inference, sessionId = UUID.randomUUID().toString(), inference = null, expired = false) }
+        _state.update { it.copy(page = Page.Inference, sessionId = UUID.randomUUID().toString(), inference = null, expired = false,
+            inferenceFromHistory = false) }
         start(true)
     }
     private fun start(inference: Boolean) {

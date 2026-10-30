@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -109,7 +110,7 @@ fun ScannerApp(model: ScannerViewModel) {
                     if (page in listOf(Page.Collection, Page.Detail, Page.Inference)) {
                         val original = if (page == Page.Detail) selected?.frame else null
                         Text("${original?.region ?: config.region} · ${original?.deviceId ?: config.deviceId}", style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }, navigationIcon = {
@@ -200,7 +201,8 @@ fun ScannerApp(model: ScannerViewModel) {
                         Footnote(if (state.draft.isDebug) "debug：跳过连接，真实信号仅保存在本地，不上传，不支持位置推理。" else "连接成功后保存配置；无账号密码或 Token。")
                     }
                     Page.Home -> {
-                        Text("${config.region} · ${config.deviceId}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${config.region} · ${config.deviceId}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (!state.inferenceTab) {
                             Panel {
                                 SectionTitle("采集位置", "必填")
@@ -210,7 +212,9 @@ fun ScannerApp(model: ScannerViewModel) {
                                 val labels = allRecords.map { it.locationLabel }.distinct().take(4)
                                 if (labels.isNotEmpty()) {
                                     Text("常用位置", style = MaterialTheme.typography.labelLarge)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { labels.forEach { label -> SuggestionChip(onClick = { model.location(label) }, label = { Text(label, maxLines = 1) }) } }
+                                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        labels.forEach { label -> SuggestionChip(onClick = { model.location(label) }, label = { Text(label, maxLines = 1) }) }
+                                    }
                                 }
                             }
                             Panel {
@@ -240,8 +244,7 @@ fun ScannerApp(model: ScannerViewModel) {
                         Panel(tinted = true) {
                             SectionTitle(if (state.running) "正在采集信号" else "准备就绪", if (state.running) "第 ${records.size + 1} 轮" else "已暂停")
                             Text(if (state.running) "正在汇总本轮 Wi-Fi、BLE 与 GPS" else "点击底部「开始采集」，每 10 秒生成一轮记录。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape))
-                            KeyValue(if (state.running) "下一轮采集" else "采集间隔", if (state.running) "${kotlin.math.ceil(10 * (1 - state.progress)).toInt()} 秒" else "10 秒")
+                            SamplingProgress(state.progress, state.running)
                         }
                         SectionTitle("采集记录", "${records.size} 轮${if (debug) " · 仅本地" else ""}")
                         SampleList(records, Modifier.weight(1f)) { model.detail(it.id) }
@@ -259,7 +262,8 @@ fun ScannerApp(model: ScannerViewModel) {
                             SectionTitle("最可能的位置", if (state.expired) "结果已过期" else if (best != null) "置信度 ${(best.probability * 100).toInt()}%" else "等待结果")
                             Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(best?.locationLabel ?: "—", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                                    Text(best?.locationLabel ?: "—", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(state.inferenceMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 if (best != null) Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
@@ -269,6 +273,7 @@ fun ScannerApp(model: ScannerViewModel) {
                             }
                             HorizontalDivider()
                             Text(if (state.inferring) "● 持续推理中 · 每 10 秒采样" else "推理已中止 · 由用户手动继续", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                            SamplingProgress(state.progress, state.inferring)
                         }
                         StatsRow(listOf((history?.frame?.signalCount?.toString() ?: "—") to "采样信号", (history?.frame?.windowEndedAt?.let(::time) ?: "—") to "采样时间", "服务器" to "结果来源"))
                         SectionTitle("位置概率", "${candidates.size} 个候选")
@@ -290,8 +295,10 @@ fun ScannerApp(model: ScannerViewModel) {
                             if (inferenceHistory.isEmpty()) item { Text("暂无推理历史", Modifier.padding(16.dp)) }
                             items(inferenceHistory, key = { it.frame.id }) { history ->
                                 Column(Modifier.fillMaxWidth().clickable { model.showInference(history) }.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(history.result?.candidates?.firstOrNull()?.locationLabel ?: history.message, fontWeight = FontWeight.Bold)
-                                    Text("${history.frame.region} · ${time(history.frame.windowEndedAt)}", style = MaterialTheme.typography.bodySmall)
+                                    Text(history.result?.candidates?.firstOrNull()?.locationLabel ?: history.message, fontWeight = FontWeight.Bold,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${history.frame.region} · ${time(history.frame.windowEndedAt)}", style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                                 HorizontalDivider()
                             }
@@ -304,6 +311,13 @@ fun ScannerApp(model: ScannerViewModel) {
 }
 
 @Composable
+internal fun SamplingProgress(progress: Float, active: Boolean) {
+    val displayedProgress = if (active) progress.coerceIn(0f, 1f) else 0f
+    LinearProgressIndicator(progress = { displayedProgress }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape))
+    KeyValue(if (active) "下一轮采样" else "采样间隔", if (active) "${kotlin.math.ceil(10 * (1 - displayedProgress)).toInt()} 秒" else "10 秒 · 已暂停")
+}
+
+@Composable
 private fun SampleList(records: List<SampleRecord>, modifier: Modifier, onClick: (SampleRecord) -> Unit) {
     LazyPanel(modifier) {
         if (records.isEmpty()) item { Text("暂无采集记录，首个完整 10 秒窗口结束后生成。", Modifier.padding(vertical = 16.dp)) }
@@ -312,12 +326,16 @@ private fun SampleList(records: List<SampleRecord>, modifier: Modifier, onClick:
             Row(Modifier.fillMaxWidth().clickable { onClick(record) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 SensorIcon(if (record.status == UploadStatus.UPLOADED) "check" else "clock")
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(record.locationLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("${frame.wifi.size} AP · ${frame.ble.size} BLE · ${time(record.createdAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(record.locationLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${frame.wifi.size} AP · ${frame.ble.size} BLE", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(time(record.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), maxLines = 1, softWrap = false)
                 }
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text("${frame.averageRssi} dBm", fontWeight = FontWeight.SemiBold)
-                    Text(record.status.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("${frame.averageRssi} dBm", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(record.status.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
                 }
                 Icon(painterResource(R.drawable.ic_chevron_right), null)
             }
@@ -332,9 +350,9 @@ private fun ColumnScope.RecordDetail(record: SampleRecord, debug: Boolean, onUpl
     val frame = record.frame
     Panel {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            InlineStat("${frame.averageRssi} dBm", "平均 RSSI")
-            InlineStat(frame.signalCount.toString(), "信号数量")
-            InlineStat("${(frame.windowEndedAt - frame.windowStartedAt) / 1000.0} s", "采样窗口")
+            Box(Modifier.weight(1f)) { InlineStat("${frame.averageRssi} dBm", "平均 RSSI") }
+            Box(Modifier.weight(1f)) { InlineStat(frame.signalCount.toString(), "信号数量") }
+            Box(Modifier.weight(1f)) { InlineStat("${(frame.windowEndedAt - frame.windowStartedAt) / 1000.0} s", "采样窗口") }
         }
         HorizontalDivider()
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -343,7 +361,7 @@ private fun ColumnScope.RecordDetail(record: SampleRecord, debug: Boolean, onUpl
         }
         record.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf("全部 ${frame.signalCount}", "Wi-Fi ${frame.wifi.size}", "BLE ${frame.ble.size}").forEachIndexed { index, name ->
             FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(name) })
         }
@@ -356,8 +374,11 @@ private fun ColumnScope.RecordDetail(record: SampleRecord, debug: Boolean, onUpl
             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 SensorIcon(if (ble) "ble" else "wifi", small = true)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(signal.mac, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                    Text("${signal.name ?: if (ble) "BLE" else "Wi-Fi"} · ${if (signal.fresh) "本轮新观测" else "缓存"} ${signal.ageMs / 1000}s · ${time(signal.observedAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(signal.mac, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), maxLines = 1, softWrap = false)
+                    Text("${signal.name ?: if (ble) "BLE" else "Wi-Fi"} · ${if (signal.fresh) "本轮新观测" else "缓存"} ${signal.ageMs / 1000}s · ${time(signal.observedAt)}",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), maxLines = 1, softWrap = false)
                 }
                 Text("${signal.rssi}\ndBm", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
             }
