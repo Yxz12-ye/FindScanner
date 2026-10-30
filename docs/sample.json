@@ -1,0 +1,36 @@
+{
+  "id": "3a49a554-4475-4ae7-856d-5042de204bcf",
+  "sessionId": "a00e2cab-13b7-405e-a352-7d253f1d110a",
+  "region": "实验室 A",
+  "deviceId": "scanner-01",
+  "windowStartedAt": 1793318400000,
+  "windowEndedAt": 1793318410000,
+  "wifi": [
+    {
+      "mac": "AA:BB:CC:DD:EE:01",
+      "rssi": -55,
+      "observedAt": 1793318408000,
+      "ageMs": 2000,
+      "fresh": true,
+      "name": "Lab-AP",
+      "frequencyMhz": 2412
+    }
+  ],
+  "ble": [],
+  "gps": null,
+  "sensors": {
+    "wifi": {
+      "status": "ok",
+      "reason": null
+    },
+    "ble": {
+      "status": "empty",
+      "reason": null
+    },
+    "gps": {
+      "status": "unavailable",
+      "reason": "no_fix"
+    }
+  },
+  "locationLabel": "餐厅 (1,2)"
+}

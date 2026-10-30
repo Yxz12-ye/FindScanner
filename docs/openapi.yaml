@@ -1,0 +1,239 @@
+openapi: 3.0.3
+info:
+  title: FindScanner API
+  version: 1.0.0
+  description: >-
+    Android fingerprint collection and inference contract. All timestamps use UTC Unix milliseconds.
+    No authentication. The reserved client server value debug performs no HTTP requests.
+servers:
+  - url: http://localhost:8000
+security: []
+paths:
+  /api/v1/connect:
+    post:
+      operationId: connect
+      summary: Check protocol and region model readiness
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConnectRequest'}
+            example: {region: '实验室 A', deviceId: scanner-01, clientVersion: '1.0', protocolVersion: 1}
+      responses:
+        '200':
+          description: Connected; absence of a model is not an error
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConnectResponse'}
+              example: {protocolVersion: 1, inferenceReady: false}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/samples:
+    post:
+      operationId: uploadSample
+      summary: Persist an immutable labeled sample idempotently
+      description: >-
+        Deduplicate by region and id. Same id and identical content returns duplicate.
+        Same id with conflicting content returns HTTP 409. Confirm only after durable commit.
+        Empty radio arrays and null GPS, even all unavailable, are valid samples.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SampleRequest'}
+      responses:
+        '201':
+          description: New sample durably accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SampleAck'}
+        '200':
+          description: Accepted or an identical sample already exists
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SampleAck'}
+        '409':
+          description: Same id with conflicting content
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+              example: {error: {code: IDEMPOTENCY_CONFLICT, message: Same id has different content}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/inferences:
+    post:
+      operationId: inferLocation
+      summary: Infer location without creating training samples
+      description: >-
+        Never store as a labeled training sample. locationLabel is forbidden in the request.
+        No model and no match are HTTP 200 business outcomes with empty candidates.
+        Clients permit at most one in-flight inference and do not replay old windows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InferenceRequest'}
+      responses:
+        '200':
+          description: Inference business outcome; see status and candidate rules
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InferenceResponse'}
+              examples:
+                matched:
+                  value:
+                    id: 3a49a554-4475-4ae7-856d-5042de204bcf
+                    inferredAt: 1793318410200
+                    status: ok
+                    candidates: [{locationLabel: '餐厅', probability: 0.8}, {locationLabel: '走廊', probability: 0.2}]
+                noModel:
+                  value: {id: 3a49a554-4475-4ae7-856d-5042de204bcf, inferredAt: 1793318410200, status: no_model, candidates: []}
+                noMatch:
+                  value: {id: 3a49a554-4475-4ae7-856d-5042de204bcf, inferredAt: 1793318410200, status: no_match, candidates: []}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  responses:
+    Error:
+      description: >-
+        HTTP 400/422 validation, 404 missing region or endpoint, 409 protocol or idempotency conflict,
+        408 timeout, 429 rate limiting, or 5xx server error. Only 408/429/5xx and I/O errors
+        cause automatic sample retries. Other failures need manual retry. No automatic connect/inference retry.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorEnvelope'}
+          example: {error: {code: VALIDATION_ERROR, message: deviceId must not be empty}}
+  schemas:
+    ConnectRequest:
+      type: object
+      required: [region, deviceId, clientVersion, protocolVersion]
+      properties:
+        region: {type: string, minLength: 1}
+        deviceId: {type: string, minLength: 1}
+        clientVersion: {type: string, minLength: 1}
+        protocolVersion: {type: integer, enum: [1]}
+    ConnectResponse:
+      type: object
+      required: [protocolVersion, inferenceReady]
+      properties:
+        protocolVersion: {type: integer, enum: [1]}
+        inferenceReady: {type: boolean}
+    SignalFrame:
+      type: object
+      required: [id, sessionId, region, deviceId, windowStartedAt, windowEndedAt, wifi, ble, gps, sensors]
+      properties:
+        id: {type: string, format: uuid, description: Immutable per-window ID echoed by the server}
+        sessionId: {type: string, format: uuid}
+        region: {type: string, minLength: 1}
+        deviceId: {type: string, minLength: 1}
+        windowStartedAt: {type: integer, format: int64, minimum: 0}
+        windowEndedAt: {type: integer, format: int64, minimum: 0, description: Must be later than windowStartedAt}
+        wifi:
+          type: array
+          description: One entry per BSSID; cached observations allowed
+          items: {$ref: '#/components/schemas/RadioSignal'}
+        ble:
+          type: array
+          description: Last observation per address within this window; no pairing or connection
+          items: {$ref: '#/components/schemas/RadioSignal'}
+        gps:
+          allOf: [{$ref: '#/components/schemas/GpsFix'}]
+          nullable: true
+          description: Null without a valid fix or when fix is older than 60 seconds
+        sensors: {$ref: '#/components/schemas/SensorStatuses'}
+      example:
+        id: 3a49a554-4475-4ae7-856d-5042de204bcf
+        sessionId: a00e2cab-13b7-405e-a352-7d253f1d110a
+        region: '实验室 A'
+        deviceId: scanner-01
+        windowStartedAt: 1793318400000
+        windowEndedAt: 1793318410000
+        wifi: [{mac: 'AA:BB:CC:DD:EE:01', rssi: -55, observedAt: 1793318408000, ageMs: 2000, fresh: true, name: Lab-AP, frequencyMhz: 2412}]
+        ble: []
+        gps: null
+        sensors:
+          wifi: {status: ok, reason: null}
+          ble: {status: empty, reason: null}
+          gps: {status: unavailable, reason: no_fix}
+    SampleRequest:
+      allOf:
+        - {$ref: '#/components/schemas/SignalFrame'}
+        - type: object
+          required: [locationLabel]
+          properties:
+            locationLabel:
+              type: string
+              minLength: 1
+              description: Abstract label; preserve internal characters and whitespace; trim only outside
+              example: '餐厅 (1,2)'
+    InferenceRequest:
+      allOf:
+        - {$ref: '#/components/schemas/SignalFrame'}
+        - not: {required: [locationLabel]}
+    RadioSignal:
+      type: object
+      required: [mac, rssi, observedAt, ageMs, fresh, name, frequencyMhz]
+      properties:
+        mac: {type: string, minLength: 1, description: Wi-Fi BSSID or BLE broadcast address}
+        rssi: {type: integer, description: Platform RSSI in dBm}
+        observedAt: {type: integer, format: int64, minimum: 0}
+        ageMs: {type: integer, format: int64, minimum: 0, description: Monotonic age at the end of the window}
+        fresh: {type: boolean, description: Observation lies in this window; cached Wi-Fi can be false}
+        name: {type: string, nullable: true}
+        frequencyMhz: {type: integer, nullable: true, description: Wi-Fi frequency; null for BLE}
+    GpsFix:
+      type: object
+      nullable: true
+      required: [latitude, longitude, accuracyMeters, observedAt, altitudeMeters]
+      properties:
+        latitude: {type: number, format: double, minimum: -90, maximum: 90}
+        longitude: {type: number, format: double, minimum: -180, maximum: 180}
+        accuracyMeters: {type: number, format: float, minimum: 0}
+        observedAt: {type: integer, format: int64, minimum: 0}
+        altitudeMeters: {type: number, format: double, nullable: true}
+    SensorStatuses:
+      type: object
+      required: [wifi, ble, gps]
+      properties:
+        wifi: {$ref: '#/components/schemas/SensorStatus'}
+        ble: {$ref: '#/components/schemas/SensorStatus'}
+        gps: {$ref: '#/components/schemas/SensorStatus'}
+    SensorStatus:
+      type: object
+      required: [status, reason]
+      properties:
+        status: {type: string, enum: [ok, cached, empty, unavailable, permission_denied, disabled, error]}
+        reason: {type: string, nullable: true, description: Extensible diagnostic text or platform error; see API.md}
+    SampleAck:
+      type: object
+      required: [id, status]
+      properties:
+        id: {type: string, format: uuid, description: Must exactly echo the sample ID}
+        status: {type: string, enum: [accepted, duplicate]}
+    Candidate:
+      type: object
+      required: [locationLabel, probability]
+      properties:
+        locationLabel: {type: string, minLength: 1}
+        probability: {type: number, format: double, minimum: 0, maximum: 1}
+    InferenceResponse:
+      type: object
+      required: [id, inferredAt, status, candidates]
+      description: >-
+        ok requires nonempty candidates with unique labels, finite probabilities, sum 1 (tolerance 0.01).
+        If returning top-k, normalize over returned candidates. no_model/no_match require empty candidates.
+        Clients sort descending and mark results stale after 30s since receipt or when paused.
+      properties:
+        id: {type: string, format: uuid, description: Must exactly echo inference request ID}
+        inferredAt: {type: integer, format: int64, minimum: 1}
+        status: {type: string, enum: [ok, no_model, no_match]}
+        candidates:
+          type: array
+          items: {$ref: '#/components/schemas/Candidate'}
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, description: Stable backend diagnostic code; client retry decisions use HTTP status}
+            message: {type: string}
