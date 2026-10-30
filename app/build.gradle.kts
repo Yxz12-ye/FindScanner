@@ -14,8 +14,8 @@ android {
         applicationId = "top.yexkr.findscanner"
         minSdk = 24
         targetSdk = 37
-        versionCode = 26103001
-        versionName = "1.2"
+        versionCode = 26103002
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         javaCompileOptions {
@@ -35,12 +35,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
+        aidl = true
         compose = true
         buildConfig = true
     }
 }
 
 dependencies {
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.datastore.preferences)

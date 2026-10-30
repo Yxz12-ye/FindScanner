@@ -13,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import top.yexkr.findscanner.data.*
 import top.yexkr.findscanner.scanner.SignalCollector
+import top.yexkr.findscanner.scanner.PrivilegedWifiScanner
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
@@ -47,6 +48,65 @@ class PipelineInstrumentedTest {
             // Emulates a callback/network implementation that completes even after cancellation.
             heldResponse?.let { withContext(NonCancellable) { it.await() } }
             return InferenceResponse(frame.id, System.currentTimeMillis(), "ok", listOf(Candidate("餐厅", 1.0)))
+        }
+    }
+    private class PrivilegedScanner : PrivilegedWifiScanner {
+        override var enabled = false
+        override var onUnavailable: (() -> Unit)? = null
+        var permissionResult = CompletableDeferred<Unit>()
+        override fun ready() = enabled
+        override suspend fun enable() { permissionResult.await(); enabled = true }
+        override suspend fun startScan() = ""
+        override fun disable() { enabled = false }
+        override fun close() { disable() }
+    }
+
+    @Test fun shizukuGateBlocksPendingAndDeniedAuthorizationAndPausesOnDisconnect(): Unit = runBlocking {
+        val name = "test-${UUID.randomUUID()}.db"; val db = database(name)
+        val bridge = PrivilegedScanner(); val collector = Collector()
+        val repo = ScannerRepository(RoomRecordStore(db), Gateway())
+        val holder = ViewModelStore()
+        val model = withContext(Dispatchers.Main) {
+            ScannerViewModel(app, repo, Settings(), collector, 500, { bridge }).also { holder.put("test", it) }
+        }
+        try {
+            withTimeout(5_000) { model.state.first { it.ready } }
+            withContext(Dispatchers.Main) {
+                model.useShizuku(true)
+                model.continueWelcome()
+                assertEquals(Page.Permissions, model.state.value.page)
+                assertTrue(model.state.value.shizukuBusy)
+            }
+            bridge.permissionResult.completeExceptionally(IllegalStateException("未获得 Shizuku 授权"))
+            withTimeout(5_000) { model.state.first { !it.shizukuBusy } }
+            assertEquals(Page.Permissions, model.state.value.page)
+            assertTrue(model.state.value.shizukuEnabled)
+            assertFalse(model.state.value.shizukuReady)
+            bridge.permissionResult = CompletableDeferred()
+            withContext(Dispatchers.Main) { model.continueWelcome() }
+            assertEquals(Page.Permissions, model.state.value.page)
+            bridge.permissionResult.complete(Unit)
+            withTimeout(5_000) { model.state.first { it.shizukuReady } }
+            // Authorization alone must not advance the page; a fresh click is required.
+            assertEquals(Page.Permissions, model.state.value.page)
+            withContext(Dispatchers.Main) { model.continueWelcome() }
+            assertEquals(Page.Connection, model.state.value.page)
+            connect(model, "debug")
+            withContext(Dispatchers.Main) {
+                model.location("测试点"); model.prepareCollection(); model.toggleCollection()
+                assertTrue(collector.active)
+                bridge.enabled = false; bridge.onUnavailable?.invoke()
+                assertFalse(collector.active)
+                assertFalse(model.state.value.running)
+                assertFalse(model.state.value.shizukuReady)
+                model.toggleCollection()
+                assertFalse(collector.active)
+                model.navigate(Page.Permissions); model.useShizuku(false); model.continueWelcome()
+                assertEquals(Page.Connection, model.state.value.page)
+            }
+        } finally {
+            withContext(Dispatchers.Main) { holder.clear() }
+            db.close(); context.deleteDatabase(name)
         }
     }
     private suspend fun connect(model: ScannerViewModel, server: String) {

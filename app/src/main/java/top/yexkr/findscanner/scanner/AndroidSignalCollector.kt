@@ -21,6 +21,7 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import top.yexkr.findscanner.data.*
 import java.util.UUID
+import kotlinx.coroutines.*
 
 interface SignalCollector {
     fun start()
@@ -30,7 +31,9 @@ interface SignalCollector {
 }
 
 @SuppressLint("MissingPermission")
-class AndroidSignalCollector(private val context: Context) : SignalCollector {
+class AndroidSignalCollector(private val context: Context, private val shizuku: (() -> PrivilegedWifiScanner)? = null) : SignalCollector {
+    private val scanScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var shellScanJob: Job? = null
     private val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
     private val bluetooth = context.getSystemService(BluetoothManager::class.java)
     private val locations = context.getSystemService(LocationManager::class.java)
@@ -73,7 +76,21 @@ class AndroidSignalCollector(private val context: Context) : SignalCollector {
         try {
             ContextCompat.registerReceiver(context, wifiReceiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION), ContextCompat.RECEIVER_EXPORTED)
             receiverRegistered = true
-            requestWifi(SystemClock.elapsedRealtime())
+            if (shizuku?.invoke()?.enabled == true) {
+                shellScanJob = scanScope.launch {
+                    while (isActive && active) {
+                        val bridge = shizuku.invoke()
+                        if (!bridge.enabled) { wifiError = "shizuku_unavailable"; break }
+                        val error = bridge.startScan()
+                        if (!active) break
+                        if (error.isEmpty()) {
+                            if (pendingWifiAt == null) pendingWifiAt = SystemClock.elapsedRealtime()
+                            wifiError = null
+                        } else wifiError = error
+                        delay(5_000)
+                    }
+                }
+            } else requestWifi(SystemClock.elapsedRealtime())
         } catch (e: Exception) { wifiError = e.javaClass.simpleName }
         try {
             if (blePermission() && bluetooth?.adapter?.isEnabled == true) {
@@ -93,6 +110,7 @@ class AndroidSignalCollector(private val context: Context) : SignalCollector {
     }
     override fun stop() {
         active = false
+        shellScanJob?.cancel(); shellScanJob = null
         runCatching { scanner?.stopScan(scanCallback) }; scanner = null
         runCatching { locations?.removeUpdates(locationListener) }
         if (receiverRegistered) runCatching { context.unregisterReceiver(wifiReceiver) }
@@ -110,6 +128,7 @@ class AndroidSignalCollector(private val context: Context) : SignalCollector {
     }.getOrDefault(false)
     @Suppress("DEPRECATION")
     private fun requestWifi(now: Long) {
+        if (shellScanJob != null) return
         if (now - lastWifiRequest < 30_000 || !context.hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) || !locationEnabled() || wifi?.isWifiEnabled != true) return
         lastWifiRequest = now
         if (wifi.startScan()) pendingWifiAt = now else wifiError = "scan_throttled_or_failed"

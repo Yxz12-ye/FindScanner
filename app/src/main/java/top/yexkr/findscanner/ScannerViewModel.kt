@@ -12,10 +12,13 @@ import kotlinx.coroutines.flow.*
 import top.yexkr.findscanner.data.*
 import top.yexkr.findscanner.scanner.AndroidSignalCollector
 import top.yexkr.findscanner.scanner.SignalCollector
+import top.yexkr.findscanner.scanner.ShizukuWifiScanner
+import top.yexkr.findscanner.scanner.PrivilegedWifiScanner
 import java.util.UUID
 
 enum class Page { Permissions, Connection, Home, Collection, Detail, Inference, SampleHistory, InferenceHistory }
 data class ScannerState(
+    val shizukuEnabled: Boolean = false, val shizukuBusy: Boolean = false, val shizukuReady: Boolean = false,
     val page: Page = Page.Permissions, val inferenceTab: Boolean = false,
     val draft: ConnectionConfig = ConnectionConfig(), val config: ConnectionConfig? = null,
     val location: String = "", val sessionId: String = "", val sessionLabel: String = "",
@@ -31,9 +34,20 @@ class ScannerViewModel @JvmOverloads constructor(
     application: Application,
     private val repository: ScannerRepository = (application as ScannerApplication).repository,
     private val configStore: ConnectionSettings = (application as ScannerApplication).configStore,
-    private val collector: SignalCollector = AndroidSignalCollector(application),
-    private val windowDurationMs: Long = 10_000
+    collector: SignalCollector? = null,
+    private val windowDurationMs: Long = 10_000,
+    private val privilegedScannerFactory: () -> PrivilegedWifiScanner = { ShizukuWifiScanner(application) }
 ) : AndroidViewModel(application) {
+    private val shizukuLazy = lazy { privilegedScannerFactory().also { scanner ->
+        scanner.onUnavailable = {
+            pause()
+            _state.update { it.copy(shizukuReady = false) }
+            notifyUser("Shizuku 已断开或授权失效，采样已暂停，请返回欢迎页重新授权")
+        }
+    } }
+    private val shizuku by shizukuLazy
+    private val collector: SignalCollector = collector ?: AndroidSignalCollector(application) { shizuku }
+    private var shizukuJob: Job? = null
     private val app = application
     private val connectivity = app.getSystemService(ConnectivityManager::class.java)
     private val _state = MutableStateFlow(ScannerState())
@@ -73,6 +87,38 @@ class ScannerViewModel @JvmOverloads constructor(
         if (error !is CancellationException) showError(listOfNotNull(context, error.userMessage()).joinToString("："))
     }
     fun permissions(granted: Set<String>) { _state.update { it.copy(granted = granted, deviceStatus = collector.deviceStatus()) } }
+    fun useShizuku(enabled: Boolean) {
+        shizukuJob?.cancel()
+        pause()
+        shizuku.disable()
+        _state.update { it.copy(shizukuEnabled = enabled, shizukuReady = false, shizukuBusy = false) }
+        if (enabled) authorizeShizuku()
+    }
+    private fun authorizeShizuku() {
+        if (state.value.shizukuBusy) return
+        shizukuJob = viewModelScope.launch {
+            _state.update { it.copy(shizukuBusy = true, shizukuReady = false) }
+            try {
+                shizuku.enable()
+                _state.update { it.copy(shizukuReady = true) }
+                notifyUser("Shizuku 已授权，shell 扫描验证成功")
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) {
+                shizuku.disable()
+                notifyUser(error.message ?: "Shizuku 授权失败，请检查服务是否运行")
+            } finally { _state.update { it.copy(shizukuBusy = false) } }
+        }
+    }
+    /** Every welcome-page exit, including partial-permission continuation, uses this gate. */
+    fun checkWelcomeShizuku(): Boolean {
+        if (state.value.shizukuEnabled && (!state.value.shizukuReady || !shizuku.ready())) {
+            authorizeShizuku()
+            notifyUser("请完成 Shizuku 授权与扫描验证后，再点击继续")
+            return false
+        }
+        return true
+    }
+    fun continueWelcome() { if (checkWelcomeShizuku()) navigate(Page.Connection) }
     fun editServer(value: String) { _state.update { it.copy(draft = it.draft.copy(server = value), error = null) } }
     fun editRegion(value: String) { _state.update { it.copy(draft = it.draft.copy(region = value), error = null) } }
     fun editDevice(value: String) { _state.update { it.copy(draft = it.draft.copy(deviceId = value), error = null) } }
@@ -129,6 +175,10 @@ class ScannerViewModel @JvmOverloads constructor(
     private fun start(inference: Boolean) {
         val config = state.value.config ?: return
         if (!foreground || samplingJob?.isActive == true) return
+        if (state.value.shizukuEnabled && (!state.value.shizukuReady || !shizuku.ready())) {
+            showError("Shizuku 不可用，请返回欢迎页重新授权")
+            return
+        }
         if (inference && config.isDebug) { showError("debug 模式下位置推理不可用"); return }
         if (!inference && state.value.sessionLabel.isBlank()) return
         val sessionId = state.value.sessionId.ifBlank { UUID.randomUUID().toString() }
@@ -227,5 +277,5 @@ class ScannerViewModel @JvmOverloads constructor(
         _state.update { it.copy(inference = null, selectedId = null, expired = false, inferenceMessage = "等待首轮采样") }
         writes.trySend { repository.clear(); notifyUser("本地历史已清理") }
     }
-    override fun onCleared() { collector.stop(); writes.close(); notices.close() }
+    override fun onCleared() { collector.stop(); shizukuJob?.cancel(); if (shizukuLazy.isInitialized()) shizuku.close(); writes.close(); notices.close() }
 }

@@ -66,15 +66,26 @@ fun ScannerApp(model: ScannerViewModel) {
     DisposableEffect(context) { onDispose { toast?.cancel() } }
     var menu by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var confirmThrottle by rememberSaveable { mutableStateOf(false) }
+    var partialPermissions by rememberSaveable { mutableStateOf(false) }
     fun refreshPermissions() { model.permissions(scanPermissions().filter { context.hasPermission(it) }.toSet()) }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         refreshPermissions()
-        if (scanPermissions().all { context.hasPermission(it) }) model.navigate(Page.Connection)
+        if (scanPermissions().all { context.hasPermission(it) }) model.continueWelcome()
         else notifyUser("部分权限未授予，仍可继续；可在系统设置中重试授权")
     }
     val localNetwork = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (localNetworkPermissions().all { context.hasPermission(it) }) model.connect()
         else notifyUser("未获得局域网权限，请授权后重试连接")
+    }
+    fun proceedWelcome(partial: Boolean) {
+        if (!model.checkWelcomeShizuku()) return
+        if (partial || scanPermissions().all { context.hasPermission(it) }) model.continueWelcome()
+        else permissions.launch(scanPermissions())
+    }
+    fun welcomeNext(partial: Boolean) {
+        if (state.shizukuEnabled) proceedWelcome(partial)
+        else { partialPermissions = partial; confirmThrottle = true }
     }
     DisposableEffect(owner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -108,6 +119,12 @@ fun ScannerApp(model: ScannerViewModel) {
         text = { Text("将删除全部采集和推理历史，其中 ${allRecords.count { it.status != UploadStatus.UPLOADED }} 条记录尚未上传（含仅本地调试记录）。删除后不可恢复。") },
         confirmButton = { TextButton(onClick = { confirmClear = false; model.clearHistory() }) { Text("确认清理") } },
         dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("取消") } })
+    if (confirmThrottle && page == Page.Permissions) AlertDialog(
+        onDismissRequest = { confirmThrottle = false },
+        title = { Text("未启用 Shizuku：Wi-Fi 扫描可能受限") },
+        text = { Text("Android 为降低耗电和无线干扰，会限制普通应用的 Wi-Fi 扫描频率：前台通常每两分钟最多 4 次，后台限制更严格。部分厂商系统即使关闭开发者选项中的扫描节流，仍可能限制扫描。\n\n本应用每 10 秒生成一轮采样，受限时可能读到旧的 Wi-Fi 列表，导致部分轮次没有新的 Wi-Fi 指纹，影响采集密度和移动时的定位更新、准确性。\n\n可返回启用 Shizuku，通过 shell 请求扫描；实际效果仍取决于手机系统。也可以接受限制，继续普通扫描。") },
+        confirmButton = { TextButton(onClick = { confirmThrottle = false; proceedWelcome(partialPermissions) }) { Text("了解并继续") } },
+        dismissButton = { TextButton(onClick = { confirmThrottle = false }) { Text("返回设置") } })
     Scaffold(modifier = Modifier.imePadding(), topBar = {
         Column(Modifier.background(MaterialTheme.colorScheme.surfaceContainer)) {
             TopAppBar(title = {
@@ -149,8 +166,8 @@ fun ScannerApp(model: ScannerViewModel) {
     }, bottomBar = {
         if (page !in listOf(Page.Detail, Page.SampleHistory, Page.InferenceHistory)) BottomActionBar {
             when (page) {
-                Page.Permissions -> MainButton(if (scanPermissions().all { it in state.granted }) "继续" else "申请权限并继续", R.drawable.ic_check) {
-                    if (scanPermissions().all { it in state.granted }) model.navigate(Page.Connection) else permissions.launch(scanPermissions())
+                Page.Permissions -> MainButton(if (state.shizukuBusy) "正在连接 Shizuku…" else if (scanPermissions().all { it in state.granted }) "继续" else "申请权限并继续", R.drawable.ic_check, enabled = !state.shizukuBusy) {
+                    welcomeNext(false)
                 }
                 Page.Connection -> MainButton(if (state.connecting) "正在连接…" else "连接并继续", R.drawable.ic_arrow_forward, enabled = state.ready && !state.connecting) {
                     if (!state.draft.isDebug && localNetworkPermissions().any { !context.hasPermission(it) }) localNetwork.launch(localNetworkPermissions())
@@ -190,6 +207,16 @@ fun ScannerApp(model: ScannerViewModel) {
                             }
                             Heading("开始之前", "扫描周围的 Wi-Fi 与 BLE 信号，为室内定位采集环境指纹。")
                             Panel {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Shizuku 增强扫描", style = MaterialTheme.typography.titleMedium)
+                                        Text(if (state.shizukuBusy) "正在请求授权并验证 shell 扫描…" else if (state.shizukuReady) "已就绪 · 每 5 秒通过 shell 请求扫描" else if (state.shizukuEnabled) "未就绪 · 请启动 Shizuku，点击继续重试" else "通过 shell 请求 Wi-Fi 扫描，减少系统节流影响", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Switch(checked = state.shizukuEnabled, onCheckedChange = model::useShizuku, enabled = !state.shizukuBusy)
+                                }
+                                Text("需先安装并启动 Shizuku，再允许本应用使用。普通定位与蓝牙权限仍需授权。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Panel {
                                 KeyValue("Wi-Fi / 精确定位", if (Manifest.permission.ACCESS_FINE_LOCATION in state.granted) "已允许" else "待授权")
                                 HorizontalDivider()
                                 KeyValue("附近的蓝牙设备", if (scanPermissions().filter { "BLUETOOTH" in it }.all { it in state.granted }) "已允许" else "待授权")
@@ -200,7 +227,7 @@ fun ScannerApp(model: ScannerViewModel) {
                             Footnote("仅在采集/推理期间使用；拒绝权限时记录具体原因，GPS 尚未定位不代表权限未授予。")
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                                 TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri())) }) { Text("系统权限设置") }
-                                TextButton(onClick = { model.navigate(Page.Connection) }) { Text("继续（允许部分数据）") }
+                                TextButton(onClick = { welcomeNext(true) }, enabled = !state.shizukuBusy) { Text("继续（允许部分数据）") }
                             }
                         }
                         Page.Connection -> {

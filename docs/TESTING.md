@@ -1,5 +1,16 @@
 # 逻辑接入测试与验收
 
+## Shizuku 增强扫描（2026-10-30）
+
+- 欢迎页默认关闭增强扫描。打开后检查 Shizuku 运行状态、请求授权、绑定非 daemon UserService，并执行一次固定的 `/system/bin/cmd wifi start-scan` 验证命令路径；验证成功仍停留欢迎页，由用户点击继续。
+- 授权拒绝、超时、服务未运行、绑定失败或命令失败均 Toast 提示并阻止继续。开关保留开启意图，点击继续可重试；关闭可改用普通模式。
+- 未开启时，主按钮和“继续（允许部分数据）”都先显示节流原因及采集/定位影响，明确确认后再进入权限申请或连接页。
+- 采样期间增强模式每次命令完成后等待 5 秒再请求，不在主线程等待 shell；普通模式保留原 30 秒请求间隔。每轮记录仍为 10 秒，以 `ScanResult.timestamp` 判定新旧结果，不将命令成功当成新数据。
+- Shizuku 断开或授权失效后暂停采样，Toast 提示回欢迎页重试；不静默切换普通模式。暂停/后台停止扫描任务，ViewModel 释放时移除监听及 UserService。
+- `PipelineInstrumentedTest.shizukuGateBlocksPendingAndDeniedAuthorizationAndPausesOnDisconnect` 用替身覆盖授权等待/拒绝阻断、重试成功后手动继续、断开暂停及关闭开关后的普通模式。
+- 已在连接的 Android 17 手机上使用临时包名 `top.yexkr.findscanner.shizukutest` 验证节流弹窗、真实 Shizuku 授权及 UserService 命令验证成功，未覆盖原签名应用和原数据。持续扫描的新结果频率仍需在采集场景中验收。
+- 官方接口参考：<https://github.com/RikkaApps/Shizuku-API>；使用 API/provider 13.1.5 和 UserService，不使用已弃用的 `Shizuku.newProcess()`。
+
 更新日期：2026-10-30。UI 已由用户验收，本次保留既有 Material 3 组件样式，将模拟数据替换为真实状态；最终页面及实地采集验收由用户执行。
 
 ## 已执行检查
