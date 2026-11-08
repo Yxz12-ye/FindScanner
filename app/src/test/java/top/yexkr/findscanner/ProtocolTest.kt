@@ -106,6 +106,22 @@ class ProtocolTest {
             assertFalse(wireJson.parseToJsonElement(inference.body.readUtf8()).jsonObject.containsKey("locationLabel"))
         } finally { server.shutdown() }
     }
+    @Test fun consecutiveInferenceRoundsDoNotReuseIdleConnections() = runTest {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val api = ApiGateway("1")
+            val config = ConnectionConfig(server.url("/").toString(), "实验室", "id").validated()
+            repeat(2) { index ->
+                val frame = frame()
+                server.enqueue(MockResponse().setBody("""{"id":"${frame.id}","inferredAt":12000,"status":"ok","candidates":[{"locationLabel":"餐厅","probability":1.0}]}"""))
+                assertEquals("餐厅", api.infer(config, frame).candidates.single().locationLabel)
+                val request = server.takeRequest()
+                assertEquals("/api/v1/inferences", request.path)
+                assertEquals(0, request.sequenceNumber)
+            }
+        } finally { server.shutdown() }
+    }
     @Test fun debugGatewayDoesNotCreateAnyNetworkRequest() = runTest {
         val gateway = ApiGateway("1")
         assertFalse(gateway.connect(ConnectionConfig("debug")).inferenceReady)

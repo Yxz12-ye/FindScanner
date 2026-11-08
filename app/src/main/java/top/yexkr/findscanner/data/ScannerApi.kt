@@ -3,6 +3,7 @@ package top.yexkr.findscanner.data
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
+import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
 import retrofit2.HttpException
 import retrofit2.Retrofit
@@ -32,6 +33,9 @@ class ApiGateway(private val version: String) : ScannerGateway {
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS)
         .callTimeout(9, TimeUnit.SECONDS).retryOnConnectionFailure(false)
+        // The API may sit idle between 10-second inference rounds while the server
+        // closes keep-alive sockets. Avoid reusing a socket the server has discarded.
+        .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
         .followRedirects(false).followSslRedirects(false).build()
     private fun api(server: String): ScannerApi {
         check(!ConnectionConfig(server).isDebug) { "debug 模式禁止网络请求" }

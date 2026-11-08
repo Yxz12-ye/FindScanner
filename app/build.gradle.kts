@@ -14,8 +14,8 @@ android {
         applicationId = "top.yexkr.findscanner"
         minSdk = 24
         targetSdk = 37
-        versionCode = 26103002
-        versionName = "1.3"
+        versionCode = 26110801
+        versionName = "1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         javaCompileOptions {
